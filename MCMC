@@ -1,0 +1,306 @@
+pacman::p_load(rstanarm)
+
+pacman::p_load(stringr,forcats,dplyr,ggplot2,dplyr,cowplot)
+select <- dplyr::select
+
+load('D:/_chesapeake/Models/modYY.rda')
+
+yrep <- posterior_predict(modYY)
+yrep2 <- data.frame(yrep)
+yrep3 <- yrep2[501:1000,]
+
+
+
+
+ysim <- data.frame(modYY$fitted.values)
+# get parameter names
+res <- data.frame(modYY)
+param <- data.frame(colnames(res))
+colnames(param) <- 'param'
+param2 <- dplyr::filter(param, !grepl('igma',param))
+NumofParam <- nrow(param2)
+
+# discard first 500 samples
+res2 <- res[501:1000,]
+
+
+                                      
+######## FUNCTION FOR HIGHEST DENSITY INTERVAL
+HDIofMCMC <- function(sampleVec, credMass = 0.75){
+sortedPts = sort(sampleVec)
+ciIdxInc = floor(credMass * length(sortedPts))
+nCIs = length(sortedPts) - ciIdxInc
+ciWidth = rep(0, nCIs)
+for (i in 1:nCIs) {
+ciWidth[i] = sortedPts[i + ciIdxInc] - sortedPts[i]
+}
+HDImin = sortedPts[which.min(ciWidth)]
+HDImax = sortedPts[which.min(ciWidth) + ciIdxInc]
+HDIlim = c(HDImin, HDImax)
+return(HDIlim)
+}
+############ CREATE EMPTY DATAFRAME
+edf <- data.frame(matrix(NA, nrow = 1, ncol = 4))
+colnames(edf) <- c('param', 'hdiMean', 'hdiMin', 'hdiMax')
+edf <- edf[0,]
+
+##
+countparam <- 1
+
+
+while (countparam != NumofParam+1){
+
+xparam <- as.character(param[countparam,])
+dat <- select(res,xparam)
+colnames(dat) <- 'xparam'
+
+hdi <- HDIofMCMC(dat$xparam,credMass = 0.75)
+hdiMin <- hdi[[1]]
+hdiMax <- hdi[[2]]
+hdiMean <- mean(dat$xparam)
+
+xdat <- data.frame(xparam, hdiMean, hdiMin, hdiMax)
+edf <- rbind(edf, xdat)
+
+countparam <- countparam+1
+}
+#####################
+##################################
+df2 <- edf %>%
+filter(hdiMean > 0) %>%
+filter(hdiMin > -0.0) 
+
+df3 <- edf %>%
+filter(hdiMean < 0) %>%
+filter(hdiMax < 0.0)
+
+dat <- rbind(df2,df3) %>%
+arrange(desc(hdiMean))
+
+
+#foo <- dplyr::filter(edf, !grepl('Sbin', xparam))
+#foo <- dplyr::filter(dat, grepl('season', xparam))
+###############################################################
+### MAIN EFFECTS
+main1 <- dplyr::filter(dat, !grepl('season',xparam)) 
+
+main2 <- main1 %>%
+mutate(xpred = stringr::str_replace_all(xparam,'poly.l','')) %>%
+mutate(xpred = stringr::str_replace_all(xpred,'poly.',''))%>%
+mutate(xpred = stringr::str_replace_all(xpred,'og','')) %>%
+####
+mutate(xpred2 = substr(xpred,1,2)) %>%
+###
+mutate(xpred3 =
+ifelse(xpred2 == 'TE','Temperature'
+,ifelse(xpred2 == 'X.','Intercept'
+,ifelse(xpred2 == 'NN','NH:NO',xpred2)))) %>%
+####
+mutate(polx = str_sub(xpred,start= -1,end = -1)) %>%
+#####
+mutate(xpred4 = 
+ifelse(xpred3 == 'Intercept', xpred3
+,paste0(xpred3,'(',polx,')'))) %>%
+#####
+mutate(ratio = ifelse(xpred2 == 'NN',1,0)) %>%
+#######################
+#filter(xpred4 != 'NO:PO(2)') %>%
+####
+arrange((hdiMean)) %>%
+data.frame() 
+
+main2$ord <- seq(1,nrow(main2),1) 
+
+main3 <- main2 %>%
+mutate(xpred5 = fct_reorder(xpred4,ord)) %>%
+####
+select(xpred5,hdiMean,hdiMin,hdiMax,ratio)
+
+saveRDS(main3,'D:/_chesapeake/Data/Dframes/maineffect.rds') 
+
+#################
+
+m = ggplot(main3) + theme_bw() + theme(legend.position = 'none')
+
+m1 <- m + geom_segment(aes(
+x = hdiMin, y = xpred5, xend = hdiMax, yend = xpred5
+)) +
+geom_point(aes(x=hdiMean,y=xpred5,color=factor(ratio)),size=1.5) +
+scale_color_manual(values = c('blue','red')) +
+geom_vline(xintercept = 0, color = 'red', linetype = 'dotted',size=0.2) 
+
+m2 <- m1 +
+labs(y = 'Predictor', x = 'Highest Density Interval for Coefficients') +
+theme(
+axis.title.y = element_text(size= 8)
+, axis.title.x = element_text(size= 8)
+, axis.text.x = element_text(size = 7)
+, axis.text.y = element_text(size = 7)
+)
+
+mtally <- main3 %>%
+mutate(xpred3 = 'NH(1)') %>%
+distinct(xpred3) %>%
+mutate(labelx = paste0('n = 6824'))
+
+m3 <- m2 + geom_text(
+data = mtally
+,aes(
+x = 50, y = xpred3,label=labelx),size=2.25)
+
+######################################################
+######################################################
+
+#######################################################
+### GROUP EFFECTS
+group1 <- dplyr::filter(dat, grepl('season',xparam)) 
+
+group2 <- group1 %>%
+mutate(xpred = stringr::str_replace_all(xparam,'b.poly.l','')) %>%
+mutate(xpred = stringr::str_replace_all(xpred,'b.poly.','')) %>%
+mutate(xpred = stringr::str_replace_all(xpred,'og','')) %>%
+####
+mutate(xpred2 = substr(xpred,1,2)) %>%
+###
+mutate(xpred3 =
+ifelse(xpred2 == 'TE','Temperature'
+,ifelse(xpred2 == 'b.','Intercept'
+,ifelse(xpred2 == 'NN','NH:NO',xpred2)))) %>%
+####
+mutate(polx = substr(xpred,7,7)) %>%
+filter(polx == 1) %>% 
+#####
+mutate(season = 
+ifelse(grepl('spring', xparam)==TRUE,'spring'
+,ifelse(grepl('summer', xparam)==TRUE,'summer'
+,ifelse(grepl('fall', xparam)==TRUE,'fall'
+,'winter')))) %>%
+mutate(Sbin = str_sub(xparam,start= -2,end = -2))%>%
+mutate(ratio = ifelse(xpred2 == 'NN',1,0)) 
+
+
+group3 <- group2 %>%
+filter(season != 'winter') %>%
+mutate(seasonorder=
+ifelse(season=='spring',1
+,ifelse(season=='summer',2,3))) %>%
+mutate(season = fct_reorder(season,seasonorder)) %>%
+filter(polx == 1) %>%
+mutate(nutorder =
+ifelse(xpred3=='PH',8
+,ifelse(xpred3=='PC',7
+,ifelse(xpred3=='DO',6
+,ifelse(xpred3=='TP',5
+,ifelse(xpred3=='PO',4
+,ifelse(xpred3=='TN',3
+,ifelse(xpred3=='NH',2,1
+))))))))%>%
+mutate(xpred3 = fct_reorder(xpred3,nutorder))
+
+
+saveRDS(group3,'D:/_chesapeake/Data/Dframes/groupeffect.rds') 
+#########################
+###################
+sb <- group3 %>%
+data.frame() %>%
+distinct(Sbin,season,.keep_all=TRUE)%>%
+data.frame() 
+#######
+#####################################
+col1 <- '#666666' 
+col2 <- '#33ccff'
+col3 <- '#cc9933'
+col4 <- '#99cc00'
+#####################################
+p <- ggplot() + theme_bw() + theme(legend.position = 'none')
+
+xalpha <- 0.7
+
+p1 <- p + geom_rect(data=filter(sb,Sbin==1),aes()
+,fill=col1
+,xmin = -Inf,xmax = Inf,
+ymin = -Inf,ymax = Inf,alpha = xalpha) +
+####
+geom_rect(data=filter(sb,Sbin==2),aes()
+,fill=col2
+,xmin = -Inf,xmax = Inf,
+ymin = -Inf,ymax = Inf,alpha = xalpha) +
+###
+geom_rect(data=filter(sb,Sbin==3),aes()
+,fill=col3
+,xmin = -Inf,xmax = Inf,
+ymin = -Inf,ymax = Inf,alpha = xalpha) +
+###
+geom_rect(data=filter(sb,Sbin==4),aes()
+,fill=col4
+,xmin = -Inf,xmax = Inf,
+ymin = -Inf,ymax = Inf,alpha = xalpha) +
+##
+###
+facet_grid(season ~ Sbin) 
+###########################################
+p2 <- p1 + geom_segment(
+data = group3
+,aes(
+x = hdiMin, y = xpred3, xend = hdiMax, yend = xpred3
+)) +
+geom_point(data = group3
+, aes(x=hdiMean,y=xpred3,color=factor(ratio)),size=1.0) +
+scale_color_manual(values = c('blue','red')) +
+geom_vline(xintercept = 0, color = 'red', linetype = 'dotted',size=0.2) +
+facet_grid(season ~ Sbin)   
+p2
+
+foo <- readRDS('D:/_chesapeake/Data/Dframes/analyte.rds') %>% 
+filter(season!='winter') %>%
+group_by(season,Sbin) %>%
+summarise(n = n()) %>%
+data.frame()
+
+
+tally <- group3 %>%
+mutate(xpred3 = 'PH') %>%
+distinct(xpred3,Sbin,season) %>%
+left_join(foo,by=c('season','Sbin')) %>%
+mutate(labelx = paste0('n=',n))
+
+ 
+p3 <- p2 + geom_text(
+data = tally
+,aes(
+x = -27, y = xpred3,label=labelx),size=2.25)
+
+
+##########################################
+
+
+
+p4 <- p3 + theme(
+axis.title.y = element_text(size= 8)
+, axis.title.x = element_text(size= 8)
+, axis.text.x = element_text(size = 7)
+, axis.text.y = element_text(size = 7)) +
+labs(x = 'Highest Density Interval for Coefficients', y = 'Predictor') +
+theme(strip.text = element_text(size = 8)) +
+theme(strip.background=element_rect(fill='#003333'))+
+theme(strip.text=element_text(color='white'))+
+theme(strip.text = element_text(size = 8)) 
+####################################################
+
+###############
+
+
+
+
+g <- plot_grid(m3, p4, labels = c('A', 'B')
+,scale=0.95,ncol=2 
+#,align='v'          
+,rel_widths= c(0.4,0.6))
+
+
+save_plot(
+'D:/_chesapeake/Graphics/MCMC.jpg'
+, g
+, base_aspect_ratio = 2.0)
+################################
+
