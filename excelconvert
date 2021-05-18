@@ -1,0 +1,15 @@
+          
+
+# LOAD PACKAGES
+pacman::p_load(tidyverse,readxl,splitstackshape)
+
+# LOAD FILE METADATA
+path_raw <- 'D:/_paxgreen/projects/cmt/CMTinfo/CMTinfoData/'
+filename <- 'FinancialSample.xlsx'
+
+d0 <- read_excel(
+xfile 
+,sheet = xsheet
+,range = xrange
+,col_names = T) %>%
+data.frame()
